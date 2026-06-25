@@ -1,1 +1,23 @@
+[theme]
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#31333f"
+font = "sans serif"
 
+[server]
+maxUploadSize = 500                # Allow up to 500 MB for the gzipped file (safety margin)
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+magicEnabled = true
+
+[logger]
+level = "info"
+
+[global]
+developmentMode = false
