@@ -5,4 +5,6 @@ scikit-learn
 pandas
 numpy
 tqdm
+pydantic
+typing-extensions
 python-dotenv
