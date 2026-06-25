@@ -175,9 +175,6 @@ def main():
         st.header("⚙️ Configuration")
         st.subheader("📁 Data Input")
         
-        # ❌ REMOVED: Use sample data checkbox
-        # Now only file uploaders are shown
-        
         candidates_file = st.file_uploader(
             "Upload candidates.jsonl",
             type=['jsonl', 'gz'],
@@ -191,7 +188,6 @@ def main():
         
         st.subheader("🎯 Ranking Parameters")
         
-        # Top K slider
         top_k = st.slider(
             "Number of candidates to rank (Top K)",
             min_value=10,
@@ -212,13 +208,11 @@ def main():
             help="For testing, limit number of candidates processed. 0 = process all candidates."
         )
         
-        # Display sample info
         if sample_size == 0:
             st.info("📊 Processing ALL candidates (100K)")
         else:
             st.info(f"📊 Processing {sample_size:,} candidates ({(sample_size/100000)*100:.1f}% of dataset)")
         
-        # Estimated time based on sample size
         if sample_size == 0:
             est_time = "4-5 minutes"
         elif sample_size <= 100:
@@ -238,7 +232,6 @@ def main():
         
         st.caption(f"⏱️ Estimated time: {est_time}")
         
-        # Run ranking button
         run_button = st.button("🚀 Rank Candidates", type="primary", use_container_width=True)
         
         if st.session_state.status != "idle":
@@ -285,7 +278,6 @@ def main():
                         with open(jd_path, 'r', encoding='utf-8') as f:
                             jd_text = f.read()
                         
-                        # Load model and create embeddings
                         model = load_embedding_model()
                         jd_parser = JDParser(jd_text)
                         jd_embedding = model.encode(jd_text, normalize_embeddings=True)
@@ -345,21 +337,32 @@ def main():
         
         st.subheader("📥 Export Results")
         
-        # Download CSV - Only export option
+        # ✅ CORRECT COLUMN ORDER: candidate_id, rank, score, reasoning
         export_df = pd.DataFrame([{
             'candidate_id': c['candidate_id'],
             'rank': c['rank'],
             'score': c['score'],
             'reasoning': c['reasoning']
         } for c in ranked])
+        
+        # ✅ Ensure exact column order
+        export_df = export_df[['candidate_id', 'rank', 'score', 'reasoning']]
+        
         csv = export_df.to_csv(index=False)
         st.download_button(
             label="📥 Download submission.csv",
             data=csv,
-            file_name=f"submission.csv",
+            file_name="submission.csv",
             mime="text/csv",
             use_container_width=True
         )
+        
+        # ✅ Show the column format
+        st.caption("📋 CSV Format: candidate_id, rank, score, reasoning")
+        
+        # Show preview of the CSV
+        with st.expander("📋 Preview CSV Content", expanded=False):
+            st.dataframe(export_df.head(10), use_container_width=True)
         
         # Full results in expandable table
         with st.expander("📋 View All Results", expanded=False):
@@ -373,7 +376,6 @@ def main():
         
         st.subheader("👤 Candidate Details")
         
-        # Pagination
         page_size = 10
         total_pages = (len(ranked) + page_size - 1) // page_size
         
