@@ -337,7 +337,7 @@ def main():
         
         st.subheader("📥 Export Results")
         
-        # ✅ CORRECT COLUMN ORDER: candidate_id, rank, score, reasoning
+        # ✅ Correct column order: candidate_id, rank, score, reasoning
         export_df = pd.DataFrame([{
             'candidate_id': c['candidate_id'],
             'rank': c['rank'],
@@ -364,15 +364,7 @@ def main():
         with st.expander("📋 Preview CSV Content", expanded=False):
             st.dataframe(export_df.head(10), use_container_width=True)
         
-        # Full results in expandable table
-        with st.expander("📋 View All Results", expanded=False):
-            full_df = pd.DataFrame([{
-                'Rank': c['rank'],
-                'Candidate ID': c['candidate_id'],
-                'Score': f"{c['score']:.3f}",
-                'Reasoning': c['reasoning']
-            } for c in ranked])
-            st.dataframe(full_df, use_container_width=True, height=400)
+        # ❌ REMOVED: View All Results expander
         
         st.subheader("👤 Candidate Details")
         
