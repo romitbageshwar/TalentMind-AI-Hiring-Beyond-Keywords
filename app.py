@@ -71,45 +71,6 @@ def load_embedding_model():
         return model
 
 
-@st.cache_data
-def load_sample_candidates() -> List[Dict[str, Any]]:
-    """Load sample candidates for demonstration."""
-    sample_path = Path("data/sample_candidates.json")
-    if sample_path.exists():
-        with open(sample_path, 'r') as f:
-            return json.load(f)
-    return generate_sample_candidates()
-
-
-def generate_sample_candidates() -> List[Dict[str, Any]]:
-    """Generate sample candidates for testing."""
-    candidates = []
-    for i in range(100):
-        candidates.append({
-            "candidate_id": f"CAND_{i+1:07d}",
-            "profile": {
-                "headline": f"Candidate {i+1}",
-                "summary": f"Professional with {(i % 10)+1} years experience",
-                "years_of_experience": (i % 10) + 1,
-                "current_title": ["Engineer", "Developer", "Manager", "Analyst"][i % 4],
-                "current_company": "Tech Corp",
-                "location": "India",
-                "country": "India"
-            },
-            "skills": [
-                {"name": "Python", "proficiency": "intermediate", "endorsements": 10, "duration_months": 12},
-                {"name": "Machine Learning", "proficiency": "beginner", "endorsements": 5, "duration_months": 6}
-            ],
-            "redrob_signals": {
-                "profile_completeness_score": 50,
-                "open_to_work_flag": True,
-                "recruiter_response_rate": 0.5,
-                "notice_period_days": 30
-            }
-        })
-    return candidates
-
-
 def display_candidate(candidate_data: Dict[str, Any], rank: int):
     """Display a single candidate in a formatted card."""
     candidate_id = candidate_data['candidate_id']
@@ -214,24 +175,19 @@ def main():
         st.header("⚙️ Configuration")
         st.subheader("📁 Data Input")
         
-        use_sample = st.checkbox(
-            "Use sample data (for testing)",
-            value=True if not st.session_state.ranked_candidates else False
-        )
+        # ❌ REMOVED: Use sample data checkbox
+        # Now only file uploaders are shown
         
-        if use_sample:
-            st.info("📊 Using built-in sample data for demonstration.")
-        else:
-            candidates_file = st.file_uploader(
-                "Upload candidates.jsonl",
-                type=['jsonl', 'gz'],
-                help="Upload the candidates file in JSONL or gzipped JSONL format"
-            )
-            jd_file = st.file_uploader(
-                "Upload job description (jd.txt or .md)",
-                type=['txt', 'md'],
-                help="Upload the job description as a text file"
-            )
+        candidates_file = st.file_uploader(
+            "Upload candidates.jsonl",
+            type=['jsonl', 'gz'],
+            help="Upload the candidates file in JSONL or gzipped JSONL format"
+        )
+        jd_file = st.file_uploader(
+            "Upload job description (jd.txt or .md)",
+            type=['txt', 'md'],
+            help="Upload the job description as a text file"
+        )
         
         st.subheader("🎯 Ranking Parameters")
         
@@ -245,26 +201,14 @@ def main():
             help="Number of candidates to include in the final output"
         )
         
-        # ✅ FLEXIBLE SAMPLE SIZE - Now from 1 to 100,000 with multiple step options
-        st.subheader("📊 Sample Size Options")
+        st.subheader("📊 Sample Size")
         
-        # Option to choose step size
-        step_size = st.radio(
-            "Step size for sample:",
-            options=[1, 10, 100],
-            index=1,  # Default to 10
-            help="Choose the increment step for the sample size slider",
-            horizontal=True
-        )
-        
-        # Calculate max value based on step
-        max_sample = 100000
         sample_size = st.slider(
             "Sample size (0 = all candidates)",
             min_value=0,
-            max_value=max_sample,
+            max_value=100000,
             value=0,
-            step=step_size,
+            step=100,
             help="For testing, limit number of candidates processed. 0 = process all candidates."
         )
         
@@ -304,15 +248,11 @@ def main():
         if st.session_state.candidate_count > 0:
             st.info(f"📊 Processed {st.session_state.candidate_count:,} candidates")
     
-    # Main content
-    if use_sample:
-        st.subheader("📄 Job Description (Sample)")
-        st.text_area(
-            "Job Description",
-            value="AI Engineer with experience in RAG, vector databases, and Python",
-            height=150,
-            disabled=True
-        )
+    # Main content - JD Display
+    if jd_file:
+        jd_text = jd_file.read().decode('utf-8')
+        st.subheader("📄 Job Description")
+        st.text_area("Job Description", value=jd_text, height=200, disabled=True)
     
     # Ranking execution
     if run_button:
@@ -320,110 +260,69 @@ def main():
             st.session_state.ranked_candidates = None
             st.session_state.status = "loading"
             
-            if use_sample:
-                with st.spinner("🔄 Loading sample data..."):
-                    candidates = load_sample_candidates()
-                    jd_text = "AI Engineer with experience in RAG, vector databases, and Python"
-                
-                with st.spinner("🔄 Processing candidates..."):
-                    start_time = time.time()
-                    
-                    # Load model and create embeddings
-                    model = load_embedding_model()
-                    jd_parser = JDParser(jd_text)
-                    jd_embedding = model.encode(jd_text, normalize_embeddings=True)
-                    scorer = CandidateScorer(jd_parser, model, jd_embedding)
-                    
-                    scored_candidates = []
-                    progress_bar = st.progress(0)
-                    
-                    for i, candidate in enumerate(candidates):
-                        score, components, reasoning = scorer.score(candidate)
-                        scored_candidates.append({
-                            'candidate_id': candidate.get('candidate_id', f'CAND_{i:07d}'),
-                            'score': score,
-                            'reasoning': reasoning,
-                            'components': components
-                        })
-                        progress_bar.progress((i + 1) / len(candidates))
-                    
-                    scored_candidates.sort(key=lambda x: x['score'], reverse=True)
-                    top_candidates = scored_candidates[:top_k]
-                    for i, cand in enumerate(top_candidates, 1):
-                        cand['rank'] = i
-                    
-                    ranking_time = time.time() - start_time
-                    st.session_state.ranked_candidates = top_candidates
-                    st.session_state.ranking_time = ranking_time
-                    st.session_state.status = "completed"
-                    st.session_state.candidate_count = len(candidates)
-                    
-                    st.success(f"✅ Ranked {len(candidates)} candidates in {ranking_time:.2f}s")
-                    
+            if not candidates_file or not jd_file:
+                st.error("❌ Please upload both candidates file and job description.")
+                st.session_state.status = "idle"
             else:
-                if candidates_file and jd_file:
-                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl.gz', delete=False) as f:
-                        f.write(candidates_file.getvalue())
-                        candidates_path = f.name
+                with tempfile.NamedTemporaryFile(mode='wb', suffix='.jsonl.gz', delete=False) as f:
+                    f.write(candidates_file.getvalue())
+                    candidates_path = f.name
+                
+                with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
+                    f.write(jd_file.getvalue())
+                    jd_path = f.name
+                
+                try:
+                    with st.spinner("🔄 Loading candidates..."):
+                        loader = CandidateLoader(candidates_path)
+                        candidates = loader.load_all(
+                            limit=sample_size if sample_size > 0 else None
+                        )
                     
-                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as f:
-                        f.write(jd_file.getvalue())
-                        jd_path = f.name
-                    
-                    try:
-                        with st.spinner("🔄 Loading candidates..."):
-                            loader = CandidateLoader(candidates_path)
-                            # Use the sample_size from slider (0 = all)
-                            candidates = loader.load_all(
-                                limit=sample_size if sample_size > 0 else None
-                            )
+                    with st.spinner("🔄 Processing candidates..."):
+                        start_time = time.time()
                         
-                        with st.spinner("🔄 Processing candidates..."):
-                            start_time = time.time()
-                            
-                            with open(jd_path, 'r', encoding='utf-8') as f:
-                                jd_text = f.read()
-                            
-                            # Load model and create embeddings
-                            model = load_embedding_model()
-                            jd_parser = JDParser(jd_text)
-                            jd_embedding = model.encode(jd_text, normalize_embeddings=True)
-                            scorer = CandidateScorer(jd_parser, model, jd_embedding)
-                            
-                            scored_candidates = []
-                            progress_bar = st.progress(0)
-                            
-                            for i, candidate in enumerate(candidates):
-                                score, components, reasoning = scorer.score(candidate)
-                                scored_candidates.append({
-                                    'candidate_id': candidate.get('candidate_id', f'CAND_{i:07d}'),
-                                    'score': score,
-                                    'reasoning': reasoning,
-                                    'components': components
-                                })
-                                progress_bar.progress((i + 1) / len(candidates))
-                            
-                            scored_candidates.sort(key=lambda x: x['score'], reverse=True)
-                            top_candidates = scored_candidates[:top_k]
-                            for i, cand in enumerate(top_candidates, 1):
-                                cand['rank'] = i
-                            
-                            ranking_time = time.time() - start_time
-                            st.session_state.ranked_candidates = top_candidates
-                            st.session_state.ranking_time = ranking_time
-                            st.session_state.status = "completed"
-                            st.session_state.candidate_count = len(candidates)
-                            
-                            st.success(f"✅ Ranked {len(candidates):,} candidates in {ranking_time:.2f}s")
-                            
-                    finally:
-                        try:
-                            os.unlink(candidates_path)
-                            os.unlink(jd_path)
-                        except:
-                            pass
-                else:
-                    st.error("❌ Please upload both files.")
+                        with open(jd_path, 'r', encoding='utf-8') as f:
+                            jd_text = f.read()
+                        
+                        # Load model and create embeddings
+                        model = load_embedding_model()
+                        jd_parser = JDParser(jd_text)
+                        jd_embedding = model.encode(jd_text, normalize_embeddings=True)
+                        scorer = CandidateScorer(jd_parser, model, jd_embedding)
+                        
+                        scored_candidates = []
+                        progress_bar = st.progress(0)
+                        
+                        for i, candidate in enumerate(candidates):
+                            score, components, reasoning = scorer.score(candidate)
+                            scored_candidates.append({
+                                'candidate_id': candidate.get('candidate_id', f'CAND_{i:07d}'),
+                                'score': score,
+                                'reasoning': reasoning,
+                                'components': components
+                            })
+                            progress_bar.progress((i + 1) / len(candidates))
+                        
+                        scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+                        top_candidates = scored_candidates[:top_k]
+                        for i, cand in enumerate(top_candidates, 1):
+                            cand['rank'] = i
+                        
+                        ranking_time = time.time() - start_time
+                        st.session_state.ranked_candidates = top_candidates
+                        st.session_state.ranking_time = ranking_time
+                        st.session_state.status = "completed"
+                        st.session_state.candidate_count = len(candidates)
+                        
+                        st.success(f"✅ Ranked {len(candidates):,} candidates in {ranking_time:.2f}s")
+                        
+                finally:
+                    try:
+                        os.unlink(candidates_path)
+                        os.unlink(jd_path)
+                    except:
+                        pass
             
         except Exception as e:
             st.error(f"❌ Error during ranking: {str(e)}")
@@ -445,49 +344,39 @@ def main():
         st.line_chart(score_df.set_index('Rank'))
         
         st.subheader("📥 Export Results")
-        col1, col2, col3 = st.columns(3)
         
-        with col1:
-            st.write("**🏆 Top 5 Candidates**")
-            preview_data = []
-            for c in ranked[:5]:
-                preview_data.append({
-                    'Rank': c['rank'],
-                    'Candidate ID': c['candidate_id'],
-                    'Score': f"{c['score']:.3f}",
-                    'Reasoning': c['reasoning'][:100] + '...' if len(c['reasoning']) > 100 else c['reasoning']
-                })
-            st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
+        # Download CSV - Only export option
+        export_df = pd.DataFrame([{
+            'candidate_id': c['candidate_id'],
+            'rank': c['rank'],
+            'score': c['score'],
+            'reasoning': c['reasoning']
+        } for c in ranked])
+        csv = export_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download submission.csv",
+            data=csv,
+            file_name=f"submission.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
         
-        with col2:
-            export_df = pd.DataFrame([{
-                'candidate_id': c['candidate_id'],
-                'rank': c['rank'],
-                'score': c['score'],
-                'reasoning': c['reasoning']
+        # Full results in expandable table
+        with st.expander("📋 View All Results", expanded=False):
+            full_df = pd.DataFrame([{
+                'Rank': c['rank'],
+                'Candidate ID': c['candidate_id'],
+                'Score': f"{c['score']:.3f}",
+                'Reasoning': c['reasoning']
             } for c in ranked])
-            csv = export_df.to_csv(index=False)
-            st.download_button(
-                label="📥 Download CSV",
-                data=csv,
-                file_name=f"submission.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        
-        with col3:
-            with st.expander("📋 View All Results", expanded=False):
-                full_df = pd.DataFrame([{
-                    'Rank': c['rank'],
-                    'Candidate ID': c['candidate_id'],
-                    'Score': f"{c['score']:.3f}",
-                    'Reasoning': c['reasoning']
-                } for c in ranked])
-                st.dataframe(full_df, use_container_width=True, height=400)
+            st.dataframe(full_df, use_container_width=True, height=400)
         
         st.subheader("👤 Candidate Details")
+        
+        # Pagination
         page_size = 10
         total_pages = (len(ranked) + page_size - 1) // page_size
+        
         if total_pages > 1:
             page = st.selectbox("Page", list(range(1, total_pages + 1)))
         else:
