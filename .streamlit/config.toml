@@ -6,7 +6,7 @@ textColor = "#31333f"
 font = "sans serif"
 
 [server]
-maxUploadSize = 500                # Allow up to 500 MB for the gzipped file (safety margin)
+maxUploadSize = 500
 enableXsrfProtection = true
 enableCORS = false
 
@@ -21,4 +21,3 @@ level = "info"
 
 [global]
 developmentMode = false
-python_version = "3.10"
