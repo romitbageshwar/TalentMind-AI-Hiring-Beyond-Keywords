@@ -1,32 +1,37 @@
-import logging
-import numpy as np
-from typing import Dict, Any, Tuple, List, Optional
-from sklearn.metrics.pairwise import cosine_similarity
+"""Multi-component scoring for candidate ranking - WITHOUT sentence-transformers."""
 
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+from typing import Dict, Any, Tuple
 from .feature_extractor import FeatureExtractor
 from .honeypot import HoneypotDetector
 from .reasoner import ReasoningGenerator
-
-logger = logging.getLogger(__name__)
 
 
 class CandidateScorer:
     """Score candidates against job description using multiple components."""
     
-    def __init__(self, jd_parser, model, jd_embedding: np.ndarray):
+    def __init__(self, jd_parser, jd_text: str):
         """
         Initialize scorer.
         
         Args:
             jd_parser: JDParser instance
-            model: SentenceTransformer model
-            jd_embedding: Pre-computed JD embedding
+            jd_text: Raw job description text
         """
         self.jd_parser = jd_parser
-        self.model = model
-        self.jd_embedding = jd_embedding
+        self.jd_text = jd_text
         self.honeypot_detector = HoneypotDetector()
         self.reasoner = ReasoningGenerator()
+        
+        # Use TF-IDF for text similarity (lightweight, no PyTorch needed)
+        self.vectorizer = TfidfVectorizer(
+            max_features=1000,
+            stop_words='english',
+            ngram_range=(1, 2)
+        )
+        self.jd_tfidf = self.vectorizer.fit_transform([jd_text])
         
         # Weights for scoring components
         self.weights = {
@@ -36,7 +41,7 @@ class CandidateScorer:
             'behavioral': 0.15,
             'product_experience': 0.10,
         }
-    
+
     def score(self, candidate: Dict[str, Any]) -> Tuple[float, Dict[str, float], str]:
         """
         Score a single candidate.
@@ -48,76 +53,43 @@ class CandidateScorer:
             Tuple of (composite_score, component_scores, reasoning)
         """
         components = {}
-        reasons = []
         details = {}
-        
-        # 1. Semantic similarity
-        semantic_score, semantic_details = self._score_semantic(candidate)
-        components['semantic'] = semantic_score
-        details['semantic'] = semantic_details
-        if semantic_score > 0.7:
-            reasons.append("Strong semantic match with JD")
-        elif semantic_score > 0.4:
-            reasons.append("Moderate semantic alignment")
-        else:
-            reasons.append("Limited semantic similarity")
-        
+
+        # 1. Semantic similarity (TF-IDF based)
+        sem, sem_det = self._score_semantic(candidate)
+        components['semantic'] = sem
+        details['semantic'] = sem_det
+
         # 2. Skill match
-        skill_score, skill_details = self._score_skills(candidate)
-        components['skill_match'] = skill_score
-        details['skill_match'] = skill_details
-        if skill_score > 0.5:
-            reasons.append(f"Good skill match ({int(skill_score*100)}%)")
-        elif skill_score > 0.2:
-            reasons.append("Some relevant skills")
-        else:
-            reasons.append("Few matching skills")
-        
+        skill, skill_det = self._score_skills(candidate)
+        components['skill_match'] = skill
+        details['skill_match'] = skill_det
+
         # 3. Experience fit
-        exp_score, exp_details = self._score_experience(candidate)
-        components['experience'] = exp_score
-        details['experience'] = exp_details
-        if exp_score > 0.7:
-            reasons.append("Experience level aligns well")
-        elif exp_score > 0.4:
-            reasons.append("Relevant experience level")
-        else:
-            reasons.append("Experience below requirements")
-        
+        exp, exp_det = self._score_experience(candidate)
+        components['experience'] = exp
+        details['experience'] = exp_det
+
         # 4. Behavioral signals
-        behavioral_score, behavioral_details = self._score_behavioral(candidate)
-        components['behavioral'] = behavioral_score
-        details['behavioral'] = behavioral_details
-        if behavioral_score > 0.7:
-            reasons.append("Strong engagement signals")
-        elif behavioral_score > 0.4:
-            reasons.append("Moderate engagement")
-        else:
-            reasons.append("Low engagement signals")
-        
+        beh, beh_det = self._score_behavioral(candidate)
+        components['behavioral'] = beh
+        details['behavioral'] = beh_det
+
         # 5. Product experience
-        product_score, product_details = self._score_product_experience(candidate)
-        components['product_experience'] = product_score
-        details['product_experience'] = product_details
-        if product_score > 0.7:
-            reasons.append("Has product company experience")
-        elif product_score > 0.3:
-            reasons.append("Some product-oriented experience")
-        
+        prod, prod_det = self._score_product_experience(candidate)
+        components['product_experience'] = prod
+        details['product_experience'] = prod_det
+
         # 6. Honeypot detection
         honeypot_risk, flags = self.honeypot_detector.detect(candidate)
         components['honeypot_risk'] = honeypot_risk
         details['honeypot'] = {'risk': honeypot_risk, 'flags': flags}
-        if honeypot_risk > 0.5:
-            reasons.append("⚠️ Potential profile inconsistencies")
-            if flags:
-                reasons.append(f"Red flags: {', '.join(flags[:2])}")
-        
+
         # Calculate composite score
         composite = self._calculate_composite(components)
         
         # Apply honeypot penalty
-        composite = composite * (1.0 - honeypot_risk * 0.4)
+        composite *= (1.0 - honeypot_risk * 0.4)
         
         # Generate reasoning
         reasoning = self.reasoner.generate(
@@ -128,30 +100,38 @@ class CandidateScorer:
         )
         
         return composite, components, reasoning
-    
+
     def _score_semantic(self, candidate: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-        """Compute semantic similarity score."""
+        """
+        Compute semantic similarity using TF-IDF.
+        
+        Args:
+            candidate: Candidate dictionary
+            
+        Returns:
+            Tuple of (score, details)
+        """
         text = FeatureExtractor.extract_candidate_text(candidate)
         if not text:
             return 0.0, {'error': 'No text extracted'}
         
         try:
-            embedding = self.model.encode(text, normalize_embeddings=True)
-            similarity = cosine_similarity(
-                self.jd_embedding.reshape(1, -1),
-                embedding.reshape(1, -1)
-            )[0][0]
-            
-            return float(similarity), {
-                'similarity': float(similarity),
-                'text_length': len(text)
-            }
+            candidate_tfidf = self.vectorizer.transform([text])
+            similarity = cosine_similarity(self.jd_tfidf, candidate_tfidf)[0][0]
+            return float(similarity), {'similarity': float(similarity), 'text_length': len(text)}
         except Exception as e:
-            logger.warning(f"Error computing semantic similarity: {e}")
             return 0.0, {'error': str(e)}
-    
+
     def _score_skills(self, candidate: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-        """Compute skill match score."""
+        """
+        Compute skill match score.
+        
+        Args:
+            candidate: Candidate dictionary
+            
+        Returns:
+            Tuple of (score, details)
+        """
         jd_skills = set(self.jd_parser.skills)
         if not jd_skills:
             return 0.5, {'jd_skills': []}
@@ -165,14 +145,14 @@ class CandidateScorer:
         
         # Endorsement bonus
         endorsement_bonus = 0.0
-        for skill in candidate_skills:
-            if skill['name'] in jd_skills:
-                endorsement_bonus += min(0.1, skill['endorsements'] / 100)
-        
-        # Proficiency bonus
         proficiency_bonus = 0.0
+        
         for skill in candidate_skills:
             if skill['name'] in jd_skills:
+                # Endorsement bonus (capped at 0.1)
+                endorsement_bonus += min(0.1, skill['endorsements'] / 100)
+                
+                # Proficiency bonus
                 prof = skill['proficiency']
                 if prof == 'expert':
                     proficiency_bonus += 0.05
@@ -191,9 +171,17 @@ class CandidateScorer:
             'endorsement_bonus': endorsement_bonus,
             'proficiency_bonus': proficiency_bonus
         }
-    
+
     def _score_experience(self, candidate: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-        """Compute experience fit score."""
+        """
+        Compute experience fit score.
+        
+        Args:
+            candidate: Candidate dictionary
+            
+        Returns:
+            Tuple of (score, details)
+        """
         required = self.jd_parser.required_years
         candidate_years = FeatureExtractor.extract_experience_years(candidate)
         
@@ -201,8 +189,10 @@ class CandidateScorer:
             return 0.0, {'candidate_years': 0, 'required_years': required}
         
         if candidate_years >= required:
+            # Bonus for having more experience than required (capped at 1.0)
             score = min(1.0, 1.0 + (candidate_years - required) * 0.05)
         else:
+            # Proportional score for less experience
             score = candidate_years / required
         
         return score, {
@@ -210,20 +200,28 @@ class CandidateScorer:
             'required_years': required,
             'raw_score': score
         }
-    
+
     def _score_behavioral(self, candidate: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-        """Compute behavioral signal score."""
+        """
+        Compute behavioral signal score.
+        
+        Args:
+            candidate: Candidate dictionary
+            
+        Returns:
+            Tuple of (score, details)
+        """
         signals = FeatureExtractor.extract_redrob_signals(candidate)
-        score = 0.5
+        score = 0.5  # Start with neutral score
         details = {}
         
-        # Recruiter response rate
+        # 1. Recruiter response rate (0-1)
         response_rate = signals.get('recruiter_response_rate', 0)
         if response_rate > 0:
             score += response_rate * 0.2
             details['response_rate'] = response_rate
         
-        # Recency of activity
+        # 2. Recency of activity
         last_active = signals.get('last_active_date', '')
         if last_active:
             try:
@@ -242,7 +240,7 @@ class CandidateScorer:
             except:
                 details['activity_recency'] = 'unknown'
         
-        # Profile completeness
+        # 3. Profile completeness
         completeness = signals.get('profile_completeness_score', 0)
         if completeness > 80:
             score += 0.1
@@ -253,12 +251,12 @@ class CandidateScorer:
         else:
             details['profile_completeness'] = 'medium'
         
-        # Open to work
+        # 4. Open to work flag
         if signals.get('open_to_work_flag', False):
             score += 0.1
             details['open_to_work'] = True
         
-        # Notice period
+        # 5. Notice period
         notice = signals.get('notice_period_days', 90)
         if notice <= 30:
             score += 0.1
@@ -269,37 +267,41 @@ class CandidateScorer:
         else:
             details['notice_period'] = 'medium'
         
-        # Search appearance
+        # 6. Search appearance (visibility)
         search_count = signals.get('search_appearance_30d', 0)
         if search_count > 100:
             score += 0.05
             details['search_visibility'] = 'high'
         
-        # Saved by recruiters
+        # 7. Saved by recruiters (interest)
         saved_count = signals.get('saved_by_recruiters_30d', 0)
         if saved_count > 10:
             score += 0.05
             details['recruiter_interest'] = 'high'
         
         return max(0.0, min(1.0, score)), details
-    
+
     def _score_product_experience(self, candidate: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
-        """Score product company experience."""
+        """
+        Score product company experience.
+        
+        Args:
+            candidate: Candidate dictionary
+            
+        Returns:
+            Tuple of (score, details)
+        """
         company_type = FeatureExtractor.extract_company_type(candidate)
         details = {'company_type': company_type}
         
         if company_type == 'product':
-            # Check how many years at product companies
+            # Calculate years at product companies
             product_years = 0
             if 'career_history' in candidate:
                 for exp in candidate['career_history']:
                     if isinstance(exp, dict):
-                        desc = exp.get('description', '').lower()
-                        company = exp.get('company', '').lower()
-                        title = exp.get('title', '').lower()
-                        
-                        combined = f"{company} {title} {desc}"
-                        product_indicators = ['product', 'platform', 'saas', 'app']
+                        combined = f"{exp.get('company', '')} {exp.get('title', '')} {exp.get('description', '')}".lower()
+                        product_indicators = ['product', 'platform', 'saas', 'app', 'fintech', 'e-commerce']
                         if any(ind in combined for ind in product_indicators):
                             product_years += exp.get('duration_months', 0) / 12
             
@@ -311,20 +313,29 @@ class CandidateScorer:
                 return 0.7, details
             else:
                 return 0.4, details
+        elif company_type == 'mixed':
+            return 0.5, details
         else:
             return 0.2, details
-    
+
     def _calculate_composite(self, components: Dict[str, float]) -> float:
-        """Calculate composite score from components."""
-        composite = 0.0
-        total_weight = 0.0
+        """
+        Calculate composite score from components.
+        
+        Args:
+            components: Dictionary of component scores
+            
+        Returns:
+            Weighted composite score
+        """
+        total = 0.0
+        weight_sum = 0.0
         
         for key, weight in self.weights.items():
             if key in components:
-                composite += components[key] * weight
-                total_weight += weight
+                total += components[key] * weight
+                weight_sum += weight
         
-        if total_weight > 0:
-            composite = composite / total_weight
-        
-        return max(0.0, min(1.0, composite))
+        if weight_sum > 0:
+            return max(0.0, min(1.0, total / weight_sum))
+        return 0.0
