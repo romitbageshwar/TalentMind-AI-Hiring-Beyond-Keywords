@@ -15,7 +15,7 @@ from typing import List, Dict, Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
-import orjson
+
 
 from src.data_loader import CandidateLoader
 from src.feature_extractor import FeatureExtractor
